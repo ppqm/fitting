@@ -1,0 +1,8 @@
+#!/bin/bash
+IN=$1
+JOB=${IN%.*}
+# /opt/mndo/mndo99 < $1 | grep "SCF BINDING ENERGY" > $JOB\.log
+# /opt/mndo/mndo99 < $1 | grep -A1000 "EIGENVALUES (EV)." > $JOB\.log
+# /opt/mndo/mndo99 < $1 | grep '    TITLE\|SCF BINDING ENERGY' > $JOB\.log
+# /opt/mndo/mndo99_20121112_intel64_ifort-11.1.080_mkl-10.3.12.361 < $1 > $JOB\.log
+/opt/mndo/mndo99_20121112_intel64_ifort-11.1.080_mkl-10.3.12.361 < $1
