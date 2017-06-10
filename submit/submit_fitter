@@ -28,6 +28,13 @@ mkdir /scratch/\$SLURM_JOB_ID
 cd /scratch/\$SLURM_JOB_ID
 
 
+# TODO copy mndo.exe
+
+# TODO copy input files
+
+# TODO run fitter
+
+# TODO transfer log
 
 
 # Remove scratch folder
