@@ -42,6 +42,13 @@ from subprocess import Popen, PIPE
 EV_TO_HARTREE = 0.036749322
 DEBYE_TO_AU = 0.393430307
 
+__DIR_PATH__ = os.path.dirname(os.path.realpath(__file__))
+__RUN__ = __DIR_PATH__ + "/run_mndo99"
+
+__SCRATCH__ = "scr/"
+__PWD__ = os.getcwd()
+
+
 def parse_reference(filename):
 
     energy     = dict()
@@ -104,7 +111,7 @@ def parse_master_precise(mndo_output):
             if "PRINCIPAL AXIS" in line:
 
                 dipole[molid] = float(line.split()[5]) * DEBYE_TO_AU
-                print "DIPOLE", dipole[molid]
+                # print "DIPOLE", dipole[molid]
                 mode = "begin"
 
 
@@ -112,11 +119,11 @@ def parse_master_precise(mndo_output):
             if "NUCLEAR ENERGY" in line:
                 e_nuc = float(line.split()[2])
                 energy[molid] = (e_nuc + e_scf - e_iso) * EV_TO_HARTREE
-                print "SCF TOTAL ENERGY", energy[molid]
+                # print "SCF TOTAL ENERGY", energy[molid]
 
             if "IONIZATION ENERGY" in line:
                 ionization[molid] = float(line.split()[2]) * EV_TO_HARTREE
-                print "IONIZATION ENERGY", ionization[molid]
+                # print "IONIZATION ENERGY", ionization[molid]
 
                 mode = "begin"
 
@@ -135,7 +142,6 @@ def parse_master_precise(mndo_output):
 
                 tokens = lines[i-1].split()
                 molid = tokens[1]
-                print molid
                 mode = "enuc"
 
 
@@ -158,6 +164,8 @@ def parse_master_precise(mndo_output):
 
     return energy, ionization, dipole
 
+
+
 def shell(cmd, shell=False):
 
     if shell:
@@ -167,17 +175,41 @@ def shell(cmd, shell=False):
         p = Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
     output, err = p.communicate()
+
+    print err
+
     return output
 
 
 
 
-def run_inputfile(i, cmd, rmsds):
+def run_inputfile(i, filename, rmsds):
+
+    print filename
+
+    tmp_scr = "scr-"+str(i)
+
+    os.chdir(__SCRATCH__)
+    os.mkdir(tmp_scr)
+    os.chdir(tmp_scr)
+
+    shell("cp "+__PWD__+"/"+filename+" .")
+
+    cmd = __RUN__ + " " + filename
 
     out = shell(cmd , shell=True)
 
+    f = open(str(i)+".out", 'w')
+    f.write(out)
+    f.close()
+
     calc_energies, calc_ionization, calc_dipole = parse_master_precise(out)
 
+    os.chdir("..")
+    shell("rm -r "+tmp_scr)
+
+    print len(calc_energies), cmd
+    return
 
     rmsds[i] = get_penalty(calc_energies, calc_ionization, calc_dipole)
 
@@ -189,10 +221,11 @@ def run_mndo99_nodisk():
 
     workers = 4
 
-    input_files = ["bin/run_mndo99 master1.inp",
-                   "bin/run_mndo99 master2.inp",
-                   "bin/run_mndo99 master3.inp",
-                   "bin/run_mndo99 master4.inp"]
+
+    input_files = ["master1.inp",
+                   "master2.inp",
+                   "master3.inp",
+                   "master4.inp"]
 
     penalty = mp.Array("d", [0.0 for _ in xrange(workers)])
 
@@ -276,6 +309,7 @@ class Parameters:
 
         self.write_fort14(values)
         # self.run_mndo99()
+
         penalty = run_mndo99_nodisk()
 
         # calc_energies, calc_ionization, calc_dipole = parse_master_precise(mndo_output)
@@ -286,7 +320,7 @@ class Parameters:
         return penalty
 
     def jacobian(self, values):
-    
+
         zenergy = self.optimize(values)
         print "ENERGY: %12.7f" % (zenergy)
         grad = []
@@ -327,7 +361,7 @@ class Parameters:
 
 
         return grad
-    
+
 if __name__ == "__main__":
 
     from mndo import names
