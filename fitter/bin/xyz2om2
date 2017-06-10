@@ -1,0 +1,42 @@
+#!/usr/bin/env python2
+import sys
+
+elements = dict()
+elements["H"] = 1
+elements["C"] = 6
+elements["N"] = 7
+elements["O"] = 8
+elements["S"] = 16
+
+
+if __name__ == "__main__":
+
+    xyzfile = sys.argv[1]
+
+    if xyzfile[-4:] != ".xyz":
+        print "ERROR: Not an .xyz file!", xyzfile
+        exit()
+
+    f = open(xyzfile, "r")
+    lines = f.readlines()
+    f.close()
+
+    charge = 0
+    if "charge = " in lines[1]:
+        tokens = lines[1].split()
+        charge = float(tokens[2])
+
+    output = """OM2 1SCF MULLIK PRECISE charge=%-i
+nexmol=-1
+TITLE %s""" % (charge, xyzfile[-20:-4])
+
+    for line in lines[2:]:
+
+        tokens = line.split()
+
+        output += "\n%-2s %s 0 %s 0 %s 0" % (tokens[0],
+                tokens[1], tokens[2], tokens[3])
+
+    output += "\n"
+    print output
+

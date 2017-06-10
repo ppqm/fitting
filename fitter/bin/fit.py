@@ -26,6 +26,7 @@
 # For more information, please refer to <http://unlicense.org>
 
 
+import multiprocessing as mp
 import numpy as np
 from scipy.optimize import minimize
 from numpy.linalg import norm
@@ -33,14 +34,129 @@ import os
 from copy import deepcopy
 import threading
 import subprocess
-
-from matplotlib import pyplot
+import csv
 import time
-import seaborn as sns
-import pandas as pd
 
 from subprocess import Popen, PIPE
 
+EV_TO_HARTREE = 0.036749322
+DEBYE_TO_AU = 0.393430307
+
+def parse_reference(filename):
+
+    energy     = dict()
+    dipole     = dict()
+    ionization = dict()
+
+    with open(filename, 'rb') as csvfile:
+        spamreader = csv.reader(csvfile, delimiter=',', quotechar='|')
+        for row in spamreader:
+            if "name" in row:
+                continue
+            molid = row[0]
+            energy[molid] = float(row[1])
+            ionization[molid] = float(row[2])
+            dipole[molid] = float(row[3])
+
+    return energy, ionization, dipole
+
+reference_energy, reference_ionization, reference_dipole \
+        = parse_reference("/home/andersx/projects/ppqm/reference.csv")
+
+def get_penalty( calc_energies, calc_ionization, calc_dipole):
+
+    epsilon = 0.0001
+
+    rmsd = 0.0
+    n = 0
+
+    print calc_energies.keys()
+
+    # for i in range(len(calc)):
+
+    #     if (abs(calc[i]) > epsilon) and \
+    #         (abs(self.reference_energy[i]) > epsilon):
+
+    #         rmsd += (calc[i] - self.reference_energy[i])**2
+    #         n += 1
+
+    # rmsd /= n
+    return np.sqrt(rmsd)
+
+def parse_master_precise(mndo_output):
+
+    lines = mndo_output.split("\n")
+
+    energy     = dict()
+    dipole     = dict()
+    ionization = dict()
+
+    mode = "begin"
+    e_scf = 0
+    e_nuc = 0
+    e_iso = 0
+    molid = 0
+
+
+    for i, line in enumerate(lines):
+
+        if mode == "dipole":
+            if "PRINCIPAL AXIS" in line:
+
+                dipole[molid] = float(line.split()[5]) * DEBYE_TO_AU
+                print "DIPOLE", dipole[molid]
+                mode = "begin"
+
+
+        if mode == "enuc":
+            if "NUCLEAR ENERGY" in line:
+                e_nuc = float(line.split()[2])
+                energy[molid] = (e_nuc + e_scf - e_iso) * EV_TO_HARTREE
+                print "SCF TOTAL ENERGY", energy[molid]
+
+            if "IONIZATION ENERGY" in line:
+                ionization[molid] = float(line.split()[2]) * EV_TO_HARTREE
+                print "IONIZATION ENERGY", ionization[molid]
+
+                mode = "begin"
+
+        if mode == "eisol":
+            if "TOTAL ENERGY OF THE ATOM (CALC)" in line: 
+                tokens = line.split()
+                idx = int(tokens[0])
+                e = float(tokens[2])
+
+                eisol[idx] = e
+
+            if "  nexmol=-1" in line:
+                tokens = lines[i-5].split()
+                e_scf = float(tokens[1]) 
+                e_iso = np.sum(atoms * eisol)
+
+                tokens = lines[i-1].split()
+                molid = tokens[1]
+                print molid
+                mode = "enuc"
+
+
+        if mode == "atoms":
+
+            tokens = line.split()
+            if len(tokens) == 5:
+                idx = int(tokens[1])
+                atoms[idx] += 1.0
+
+            if "****" in line:
+                mode = "eisol"
+                # print atoms
+                eisol = np.zeros((30))
+
+        if mode == "begin":
+            if "   NUMBER     NUMBER               (ANGSTROMS)          (ANGSTROMS)          (ANGSTROMS" in line:
+                mode = "atoms"
+                atoms = np.zeros((30))
+
+    return energy, ionization, dipole
 
 def shell(cmd, shell=False):
 
@@ -54,68 +170,41 @@ def shell(cmd, shell=False):
     return output
 
 
-output1 = []
-output2 = []
-output3 = []
-output4 = []
 
-def task1():
-    global output1
-    cmd = ["./run_mndo99", "master1.inp"]
-    output1 = subprocess.check_output(cmd)
 
-def task2():
-    global output2
-    cmd = ["./run_mndo99", "master2.inp"]
-    output2 = subprocess.check_output(cmd)
+def run_inputfile(i, cmd, rmsds):
 
-def task3():
-    global output3
-    cmd = ["./run_mndo99", "master3.inp"]
-    output3 = subprocess.check_output(cmd)
+    out = shell(cmd , shell=True)
 
-def task4():
-    global output4
-    cmd = ["./run_mndo99", "master4.inp"]
-    output4 = subprocess.check_output(cmd)
+    calc_energies, calc_ionization, calc_dipole = parse_master_precise(out)
+
+
+    rmsds[i] = get_penalty(calc_energies, calc_ionization, calc_dipole)
+
+    return
+
 
 
 def run_mndo99_nodisk():
 
-    t1 = threading.Thread(target=task1)
-    t2 = threading.Thread(target=task2)
-    t3 = threading.Thread(target=task3)
-    t4 = threading.Thread(target=task4)
+    workers = 4
 
-    t1.start()
-    t2.start()
-    t3.start()
-    t4.start()
+    input_files = ["bin/run_mndo99 master1.inp",
+                   "bin/run_mndo99 master2.inp",
+                   "bin/run_mndo99 master3.inp",
+                   "bin/run_mndo99 master4.inp"]
 
-    t1.join()
-    t2.join()
-    t3.join()
-    t4.join()
+    penalty = mp.Array("d", [0.0 for _ in xrange(workers)])
 
-    out = output1 + output2 + output3 + output4
+    processes = [mp.Process(target=run_inputfile, args=(i, input_files[i], penalty)) \
+            for i in xrange(workers)]
 
-    return out
+    for p in processes: p.start()
+    for p in processes: p.join()
 
-def parse_reference(filename):
+    print penalty
+    return penalty
 
-    energy = np.zeros((7174))
-
-    f = open(filename, "r")
-    lines = f.readlines()
-    f.close()
-
-    for line in lines:
-        tokens = line.split()
-        if len(tokens) == 2:
-            idx = int(tokens[0])
-            energy[idx] = float(tokens[1])
-
-    return energy
 
 
 class Parameters:
@@ -125,7 +214,8 @@ class Parameters:
         self.names = names
         self.n = len(names)
         self.work_dir = work_dir
-        self.reference_energy = parse_reference("dsgdb7ae2.xyz")
+        self.reference_energy, self.reference_ionization, self.reference_dipole \
+                = parse_reference("/home/andersx/projects/ppqm/reference.csv")
 
         self.output1 = []
         self.output2 = []
@@ -158,138 +248,27 @@ class Parameters:
         f.write(output)
         f.close()
 
-    def run_mndo99(self):
-        os.system("./compute.sh")
-
-    def get_energies(self, input_file):
-
-        f = open(input_file, "r") 
-        lines = f.readlines()
-        f.close()
-
-        for line in lines:
-            if "SCF BINDING ENERGY" in line:
-                energy = float(line[25:42])
-                return energy
-
-        return 0.0 # Some dummy number
-
-    def parse_mndo(self):
-
-        energy = np.zeros((7174))
-        input_files = [f for f in os.listdir(self.work_dir) if f.endswith('.log')]
-
-        for input_file in input_files:
-            e = self.get_energies(self.work_dir + "/" + input_file)
-            idx = int(input_file[:4])
-            energy[idx] = e
-
-        return energy * 23.0609
 
 
-    def parse_master(self, filename):
 
-        f = open(filename, "r")
-        lines = f.readlines()
-        f.close()
-    
-        energy = np.zeros((7174))
-
-        indexes = []
-        energies = []
-
-
-        for line in lines:
-            if "TITLE" in line:
-                tokens = line.split()
-                indexes.append(int(tokens[1]))
-            elif "SCF BINDING ENERGY" in line:
-                tokens = line.split()
-                energies.append(float(tokens[3]))
-
-        for i, idx in enumerate(indexes):
-            energy[idx] = energies[i]
-
-    def parse_master_precise(self, mndo_output):
-
-        lines = mndo_output.split("\n")
-
-        energy = np.zeros((7174))
-
-        mode = "begin"
-        e_scf = 0
-        e_nuc = 0
-        e_iso = 0
-        molid = 0
-
-        for i, line in enumerate(lines):
-
-            if mode == "enuc":
-                if "NUCLEAR ENERGY" in line:
-                    e_nuc = float(line.split()[2])
-
-                    energy[molid] = e_nuc + e_scf - e_iso
-
-                    # print "SCF TOTAL ENERGY", e_nuc + e_scf - e_iso
-                    mode = "begin"
-
-            if mode == "eisol":
-                if "TOTAL ENERGY OF THE ATOM (CALC)" in line: 
-                    tokens = line.split()
-                    idx = int(tokens[0])
-                    e = float(tokens[2])
-
-                    eisol[idx] = e
-
-                if "  nexmol=-1" in line:
-                    tokens = lines[i-5].split()
-                    e_scf = float(tokens[1]) 
-                    e_iso = np.sum(atoms * eisol)
-
-                    tokens = lines[i-1].split()
-                    molid = int(tokens[1]) 
-
-                    mode = "enuc"
-
-
-            if mode == "atoms":
-
-                tokens = line.split()
-                if len(tokens) == 5:
-                    idx = int(tokens[1])
-                    atoms[idx] += 1.0
-
-                if "****" in line:
-                    mode = "eisol"
-                    # print atoms
-                    eisol = np.zeros((20))
-
-
-            if mode == "begin":
-                if "   NUMBER     NUMBER               (ANGSTROMS)          (ANGSTROMS)          (ANGSTROMS" in line:
-                    mode = "atoms"
-                    atoms = np.zeros((20))
-
-        return energy * 23.0609
-
-
-        
-
-    def get_penalty(self, calc):
+    def get_penalty(self, calc_energies, calc_ionization, calc_dipole):
 
         epsilon = 0.0001
 
         rmsd = 0.0
         n = 0
-        for i in range(len(calc)):
 
-            if (abs(calc[i]) > epsilon) and \
-                (abs(self.reference_energy[i]) > epsilon):
+        print calc_energies.keys()
 
-                rmsd += (calc[i] - self.reference_energy[i])**2
-                n += 1
+        # for i in range(len(calc)):
 
-        rmsd /= n
+        #     if (abs(calc[i]) > epsilon) and \
+        #         (abs(self.reference_energy[i]) > epsilon):
+
+        #         rmsd += (calc[i] - self.reference_energy[i])**2
+        #         n += 1
+
+        # rmsd /= n
         return np.sqrt(rmsd)
 
 
@@ -297,11 +276,11 @@ class Parameters:
 
         self.write_fort14(values)
         # self.run_mndo99()
-        mndo_output = run_mndo99_nodisk()
+        penalty = run_mndo99_nodisk()
 
-        calc_energies = self.parse_master_precise(mndo_output)
+        # calc_energies, calc_ionization, calc_dipole = parse_master_precise(mndo_output)
 
-        penalty = self.get_penalty(calc_energies)
+        # penalty = self.get_penalty(calc_energies, calc_ionization, calc_dipole)
 
         # print "ENERGY: %12.7f" % (penalty)
         return penalty
@@ -357,21 +336,9 @@ if __name__ == "__main__":
 
     nv = Parameters(names)
 
-    # minimize(nv.optimize, values, method="Powell", 
-    # minimize(nv.optimize, values, jac=nv.jacobian, method="Newton-CG", 
+    nv.optimize(values)
+
+    exit()
+
     minimize(nv.optimize, values, jac=nv.jacobian, method="L-BFGS-B", 
             options={"maxiter": 1000, "disp": True})
-
-
-    # ydata = pd.DataFrame(dict({ "Calculated" : er, 
-    #                             "Predicted" : e}))
-
-
-
-    # rmsd = get_rmsd(er, e)
-    # print "RMSD = %6.2f kcal/mol" % rmsd
-    # sns.set(style="whitegrid")
-    # ax = sns.lmplot(x="Calculated", y="Predicted", data=ydata)
-    # ax.set(xlim=[-2500, -500], ylim=[-2500,-500])
-    # ax.set(ylabel='PBE0/def2-TZVP HoF [kcal/mol]', xlabel='DFTB3 + ML-correction HoF [kcal/mol]')
-    # pyplot.savefig("correlation.png")
