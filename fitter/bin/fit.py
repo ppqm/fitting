@@ -45,8 +45,8 @@ DEBYE_TO_AU = 0.393430307
 __DIR_PATH__ = os.path.dirname(os.path.realpath(__file__))
 __RUN__ = __DIR_PATH__ + "/run_mndo99"
 
-__SCRATCH__ = "scr/"
 __PWD__ = os.getcwd()
+__SCRATCH__ = __PWD__
 
 
 def parse_reference(filename):
@@ -67,8 +67,6 @@ def parse_reference(filename):
 
     return energy, ionization, dipole
 
-reference_energy, reference_ionization, reference_dipole \
-        = parse_reference("/home/andersx/projects/ppqm/reference.csv")
 
 def get_penalty( calc_energies, calc_ionization, calc_dipole):
 
@@ -176,67 +174,7 @@ def shell(cmd, shell=False):
 
     output, err = p.communicate()
 
-    print err
-
     return output
-
-
-
-
-def run_inputfile(i, filename, rmsds):
-
-    print filename
-
-    tmp_scr = "scr-"+str(i)
-
-    os.chdir(__SCRATCH__)
-    os.mkdir(tmp_scr)
-    os.chdir(tmp_scr)
-
-    shell("cp "+__PWD__+"/"+filename+" .")
-
-    cmd = __RUN__ + " " + filename
-
-    out = shell(cmd , shell=True)
-
-    f = open(str(i)+".out", 'w')
-    f.write(out)
-    f.close()
-
-    calc_energies, calc_ionization, calc_dipole = parse_master_precise(out)
-
-    os.chdir("..")
-    shell("rm -r "+tmp_scr)
-
-    print len(calc_energies), cmd
-    return
-
-    rmsds[i] = get_penalty(calc_energies, calc_ionization, calc_dipole)
-
-    return
-
-
-
-def run_mndo99_nodisk():
-
-    workers = 4
-
-
-    input_files = ["master1.inp",
-                   "master2.inp",
-                   "master3.inp",
-                   "master4.inp"]
-
-    penalty = mp.Array("d", [0.0 for _ in xrange(workers)])
-
-    processes = [mp.Process(target=run_inputfile, args=(i, input_files[i], penalty)) \
-            for i in xrange(workers)]
-
-    for p in processes: p.start()
-    for p in processes: p.join()
-
-    print penalty
-    return penalty
 
 
 
@@ -250,10 +188,86 @@ class Parameters:
         self.reference_energy, self.reference_ionization, self.reference_dipole \
                 = parse_reference("/home/andersx/projects/ppqm/reference.csv")
 
-        self.output1 = []
-        self.output2 = []
-        self.output3 = []
-        self.output4 = []
+        self.input_files = []
+
+
+    def setup_master(self):
+
+        for i, filename in enumerate(self.input_files):
+
+            tmp_scr = "scr-"+str(i)
+            os.chdir(__SCRATCH__)
+            os.mkdir(tmp_scr)
+            os.chdir(tmp_scr)
+
+            shell("cp "+__PWD__+"/"+filename+" .")
+
+            os.chdir("..")
+
+        return
+
+
+    def clean_master(self):
+
+        for i, filename in enumerate(self.input_files):
+
+            tmp_scr = "scr-"+str(i)
+            os.chdir(__SCRATCH__)
+            shell("rm -r " + tmp_scr)
+            os.chdir(__PWD__)
+
+            print "delete "+tmp_scr
+
+        return
+
+
+    def run_inputfile(self, i, filename, rmsds):
+
+        print os.getcwd()
+
+        tmp_scr = "scr-"+str(i)
+        os.chdir(tmp_scr)
+
+        shell("cp ../fort.14 .")
+
+        cmd = __RUN__ + " " + filename
+        out = shell(cmd , shell=True)
+
+        # f = open(str(i)+".out", 'w')
+        # f.write(out)
+        # f.close()
+
+        calc_energies, calc_ionization, calc_dipole = parse_master_precise(out)
+
+        os.chdir("..")
+
+        print len(calc_energies), cmd
+        return
+
+        rmsds[i] = get_penalty(calc_energies, calc_ionization, calc_dipole)
+
+        return
+
+
+
+    def run_mndo99_nodisk(self):
+
+        workers = len(self.input_files)
+
+        penalty = mp.Array("d", [0.0 for _ in xrange(workers)])
+
+        processes = [mp.Process(target=self.run_inputfile, args=(i, self.input_files[i], penalty)) \
+                for i in xrange(workers)]
+
+        for p in processes: p.start()
+        for p in processes: p.join()
+
+        quit()
+
+        print penalty
+        return penalty
+
+
 
     def write_fort14(self, params):
 
@@ -310,7 +324,7 @@ class Parameters:
         self.write_fort14(values)
         # self.run_mndo99()
 
-        penalty = run_mndo99_nodisk()
+        penalty = self.run_mndo99_nodisk()
 
         # calc_energies, calc_ionization, calc_dipole = parse_master_precise(mndo_output)
 
@@ -364,15 +378,54 @@ class Parameters:
 
 if __name__ == "__main__":
 
+    import argparse
+    import sys
+
+    description = """
+Folder dependent. Will look for master files in current directory.
+"""
+
+    parser = argparse.ArgumentParser(
+                    usage='%(prog)s [options]',
+                    description=description,
+                    formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    parser.add_argument('-q', '--quantum', action='store', help='Which quantum program to parametrize towards', metavar='exe')
+    parser.add_argument('-f', '--format', action='store', help='Input file format. Either mop or inp.', metavar='fmt')
+
+    args = parser.parse_args()
+
+    # TODO get format
+    input_files = [f for f in os.listdir(__PWD__) if f.endswith('.inp')]
+    input_files.sort()
+
+    if len(input_files) == 0:
+        print "error: no master files"
+        print
+        print description
+        exit()
+
+
+    # TODO get reference data
+    reference_energy, reference_ionization, reference_dipole \
+        = parse_reference("/home/andersx/projects/ppqm/reference.csv")
+
+
+
     from mndo import names
-    # from mndo import values_optimized as values
     from mndo import values
 
     nv = Parameters(names)
 
+    nv.input_files = input_files
+    nv.setup_master()
+
     nv.optimize(values)
+
+    nv.clean_master()
 
     exit()
 
-    minimize(nv.optimize, values, jac=nv.jacobian, method="L-BFGS-B", 
+    print minimize(nv.optimize, values, jac=nv.jacobian, method="L-BFGS-B",
             options={"maxiter": 1000, "disp": True})
+
