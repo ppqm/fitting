@@ -41,6 +41,7 @@ from subprocess import Popen, PIPE
 
 EV_TO_HARTREE = 0.036749322
 DEBYE_TO_AU = 0.393430307
+HARTREE_TO_KCAL_MOL = 627.51
 
 __DIR_PATH__ = os.path.dirname(os.path.realpath(__file__))
 __RUN__ = __DIR_PATH__ + "/run_mndo99"
@@ -67,26 +68,39 @@ def parse_reference(filename):
 
     return energy, ionization, dipole
 
+__reference_energy__, __reference_ionization__, __reference_dipole__ \
+                = parse_reference("/home/andersx/projects/ppqm/reference.csv")
 
-def get_penalty( calc_energies, calc_ionization, calc_dipole):
+
+def get_penalty( calc_energy, calc_ionization, calc_dipole):
 
     epsilon = 0.0001
 
-    rmsd = 0.0
+    penalty  = 0.0
     n = 0
 
-    print calc_energies.keys()
+    # From
+    W_BINDING    =  1.0 # kcal/mol^-1
+    W_IONIZATION = 10.0 # eV^-1 
+    W_DIPOLE     = 20.0 # Debye^-1
 
-    # for i in range(len(calc)):
+    for key in calc_energy.keys():
 
-    #     if (abs(calc[i]) > epsilon) and \
-    #         (abs(self.reference_energy[i]) > epsilon):
+        E_diff = (calc_energy[key] - __reference_energy__[key]) * HARTREE_TO_KCAL_MOL
 
-    #         rmsd += (calc[i] - self.reference_energy[i])**2
-    #         n += 1
+        I_diff = (calc_ionization[key] -  __reference_ionization__[key]) / EV_TO_HARTREE
 
-    # rmsd /= n
-    return np.sqrt(rmsd)
+        D_diff = (calc_dipole[key] - __reference_dipole__[key]) / DEBYE_TO_AU
+
+        penalty += W_BINDING**2 * E_diff**2 \
+                 + W_IONIZATION**2 * I_diff**2 \
+                 + W_DIPOLE**2 * D_diff**2
+
+        # print key, calc_energy[key], __reference_energy__[key]
+        # print key, calc_ionization[key], __reference_ionization__[key]
+        # print key, calc_dipole[key], __reference_dipole__[key]
+
+    return penalty
 
 def parse_master_precise(mndo_output):
 
@@ -105,12 +119,12 @@ def parse_master_precise(mndo_output):
 
     for i, line in enumerate(lines):
 
-        if mode == "dipole":
-            if "PRINCIPAL AXIS" in line:
+        # if mode == "dipole":
+        if "     PRINCIPAL AXIS" in line:
 
-                dipole[molid] = float(line.split()[5]) * DEBYE_TO_AU
-                # print "DIPOLE", dipole[molid]
-                mode = "begin"
+            dipole[molid] = float(line.split()[5]) * DEBYE_TO_AU
+            # print "DIPOLE", dipole[molid]
+            mode = "begin"
 
 
         if mode == "enuc":
@@ -120,7 +134,7 @@ def parse_master_precise(mndo_output):
                 # print "SCF TOTAL ENERGY", energy[molid]
 
             if "IONIZATION ENERGY" in line:
-                ionization[molid] = float(line.split()[2]) * EV_TO_HARTREE
+                ionization[molid] = -1.0 * float(line.split()[2]) * EV_TO_HARTREE
                 # print "IONIZATION ENERGY", ionization[molid]
 
                 mode = "begin"
@@ -221,9 +235,9 @@ class Parameters:
         return
 
 
-    def run_inputfile(self, i, filename, rmsds):
+    def run_inputfile(self, i, filename, rmsds, mol_count):
 
-        print os.getcwd()
+        # print os.getcwd()
 
         tmp_scr = "scr-"+str(i)
         os.chdir(tmp_scr)
@@ -241,10 +255,11 @@ class Parameters:
 
         os.chdir("..")
 
-        print len(calc_energies), cmd
-        return
+        # print len(calc_energies), cmd
 
         rmsds[i] = get_penalty(calc_energies, calc_ionization, calc_dipole)
+        mol_count[i] = len(calc_energies.keys())
+
 
         return
 
@@ -255,17 +270,17 @@ class Parameters:
         workers = len(self.input_files)
 
         penalty = mp.Array("d", [0.0 for _ in xrange(workers)])
+        mol_count = mp.Array("d", [0.0 for _ in xrange(workers)])
 
-        processes = [mp.Process(target=self.run_inputfile, args=(i, self.input_files[i], penalty)) \
+        processes = [mp.Process(target=self.run_inputfile, args=(i, self.input_files[i], penalty, mol_count)) \
                 for i in xrange(workers)]
 
         for p in processes: p.start()
         for p in processes: p.join()
 
-        quit()
+        normalized_penalty = sum(penalty) / sum(mol_count)
 
-        print penalty
-        return penalty
+        return normalized_penalty
 
 
 
@@ -297,28 +312,6 @@ class Parameters:
 
 
 
-
-    def get_penalty(self, calc_energies, calc_ionization, calc_dipole):
-
-        epsilon = 0.0001
-
-        rmsd = 0.0
-        n = 0
-
-        print calc_energies.keys()
-
-        # for i in range(len(calc)):
-
-        #     if (abs(calc[i]) > epsilon) and \
-        #         (abs(self.reference_energy[i]) > epsilon):
-
-        #         rmsd += (calc[i] - self.reference_energy[i])**2
-        #         n += 1
-
-        # rmsd /= n
-        return np.sqrt(rmsd)
-
-
     def optimize(self, values):
 
         self.write_fort14(values)
@@ -326,11 +319,6 @@ class Parameters:
 
         penalty = self.run_mndo99_nodisk()
 
-        # calc_energies, calc_ionization, calc_dipole = parse_master_precise(mndo_output)
-
-        # penalty = self.get_penalty(calc_energies, calc_ionization, calc_dipole)
-
-        # print "ENERGY: %12.7f" % (penalty)
         return penalty
 
     def jacobian(self, values):
@@ -396,7 +384,7 @@ Folder dependent. Will look for master files in current directory.
     args = parser.parse_args()
 
     # TODO get format
-    input_files = [f for f in os.listdir(__PWD__) if f.endswith('.inp')]
+    input_files = [f for f in os.listdir(__PWD__) if (f.endswith('.inp') and f.startswith('master'))]
     input_files.sort()
 
     if len(input_files) == 0:
@@ -422,10 +410,7 @@ Folder dependent. Will look for master files in current directory.
 
     nv.optimize(values)
 
-    nv.clean_master()
-
-    exit()
-
     print minimize(nv.optimize, values, jac=nv.jacobian, method="L-BFGS-B",
-            options={"maxiter": 1000, "disp": True})
+          options={"maxiter": 1000, "disp": True})
 
+    nv.clean_master()

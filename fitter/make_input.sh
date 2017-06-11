@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-bin/xyz2om2 /home/charnley/dev/2017-ppqm-dataset/ppqm-qm9/xyz/dsgdb9nsd_000003.xyz > mndo_input/dsgdb9nsd_000003.inp
+# NOTE: two molecules are disabled, the hand-generated input files are in the mndo_input folder lol
+# bin/xyz2om2 /home/charnley/dev/2017-ppqm-dataset/ppqm-qm9/xyz/dsgdb9nsd_000003.xyz > mndo_input/dsgdb9nsd_000003.inp # Contains 3 atoms
 bin/xyz2om2 /home/charnley/dev/2017-ppqm-dataset/ppqm-qm9/xyz/dsgdb9nsd_000004.xyz > mndo_input/dsgdb9nsd_000004.inp
-bin/xyz2om2 /home/charnley/dev/2017-ppqm-dataset/ppqm-qm9/xyz/dsgdb9nsd_000005.xyz > mndo_input/dsgdb9nsd_000005.inp
+# bin/xyz2om2 /home/charnley/dev/2017-ppqm-dataset/ppqm-qm9/xyz/dsgdb9nsd_000005.xyz > mndo_input/dsgdb9nsd_000005.inp # Contains 3 atoms
 bin/xyz2om2 /home/charnley/dev/2017-ppqm-dataset/ppqm-qm9/xyz/dsgdb9nsd_000015.xyz > mndo_input/dsgdb9nsd_000015.inp
 bin/xyz2om2 /home/charnley/dev/2017-ppqm-dataset/ppqm-qm9/xyz/dsgdb9nsd_000019.xyz > mndo_input/dsgdb9nsd_000019.inp
 bin/xyz2om2 /home/charnley/dev/2017-ppqm-dataset/ppqm-qm9/xyz/dsgdb9nsd_000033.xyz > mndo_input/dsgdb9nsd_000033.inp
