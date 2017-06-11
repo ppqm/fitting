@@ -230,8 +230,6 @@ class Parameters:
             shell("rm -r " + tmp_scr)
             os.chdir(__PWD__)
 
-            print "delete "+tmp_scr
-
         return
 
 
@@ -245,17 +243,18 @@ class Parameters:
         shell("cp ../fort.14 .")
 
         cmd = __RUN__ + " " + filename
+        print cmd
         out = shell(cmd , shell=True)
 
-        # f = open(str(i)+".out", 'w')
-        # f.write(out)
-        # f.close()
+        f = open(str(i)+".out", 'w')
+        f.write(out)
+        f.close()
 
         calc_energies, calc_ionization, calc_dipole = parse_master_precise(out)
 
         os.chdir("..")
 
-        # print len(calc_energies), cmd
+        print len(calc_energies), cmd
 
         rmsds[i] = get_penalty(calc_energies, calc_ionization, calc_dipole)
         mol_count[i] = len(calc_energies.keys())
@@ -381,7 +380,12 @@ Folder dependent. Will look for master files in current directory.
     parser.add_argument('-q', '--quantum', action='store', help='Which quantum program to parametrize towards', metavar='exe')
     parser.add_argument('-f', '--format', action='store', help='Input file format. Either mop or inp.', metavar='fmt')
 
+    parser.add_argument('-r', '--run', action='store', help='Overwrite the run cmd', metavar='cmd')
+
     args = parser.parse_args()
+
+    if args.run != "":
+        __RUN__ = args.run
 
     # TODO get format
     input_files = [f for f in os.listdir(__PWD__) if (f.endswith('.inp') and f.startswith('master'))]
@@ -399,7 +403,6 @@ Folder dependent. Will look for master files in current directory.
         = parse_reference("/home/andersx/projects/ppqm/reference.csv")
 
 
-
     from mndo import names
     from mndo import values
 
@@ -410,7 +413,7 @@ Folder dependent. Will look for master files in current directory.
 
     nv.optimize(values)
 
-    print minimize(nv.optimize, values, jac=nv.jacobian, method="L-BFGS-B",
-          options={"maxiter": 1000, "disp": True})
+    # print minimize(nv.optimize, values, jac=nv.jacobian, method="L-BFGS-B",
+    #       options={"maxiter": 1000, "disp": True})
 
     nv.clean_master()
