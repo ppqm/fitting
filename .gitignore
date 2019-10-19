@@ -1,4 +1,7 @@
 fitter/scr/*
+_tmp_*
+fort.*
+*.inp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
