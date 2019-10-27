@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import os
 import subprocess
+import json
 
 __MNDO__ = "mndo"
 __MNDO__ = os.path.expanduser(__MNDO__)
@@ -49,6 +50,41 @@ __ATOMLINE__ = "{:2s} {:} 0 {:} 0 {:} 0"
 __DEBUG__ = "jprint=7"
 
 
+__ATOMS__ = [x.strip() for x in [
+    'h ', 'he', \
+    'li', 'be', 'b ', 'c ', 'n ', 'o ', 'f ', 'ne', \
+    'na', 'mg', 'al', 'si', 'p ', 's ', 'cl', 'ar', \
+    'k ', 'ca', 'sc', 'ti', 'v ', 'cr', 'mn', 'fe', 'co', 'ni', 'cu', \
+    'zn', 'ga', 'ge', 'as', 'se', 'br', 'kr',  \
+    'rb', 'sr', 'y ', 'zr', 'nb', 'mo', 'tc', 'ru', 'rh', 'pd', 'ag', \
+    'cd', 'in', 'sn', 'sb', 'te', 'i ', 'xe',  \
+    'cs', 'ba', 'la', 'ce', 'pr', 'nd', 'pm', 'sm', 'eu', 'gd', 'tb', 'dy', \
+    'ho', 'er', 'tm', 'yb', 'lu', 'hf', 'ta', 'w ', 're', 'os', 'ir', 'pt', \
+    'au', 'hg', 'tl', 'pb', 'bi', 'po', 'at', 'rn', \
+    'fr', 'ra', 'ac', 'th', 'pa', 'u ', 'np', 'pu']]
+
+
+def convert_atom(atom, t=None):
+    """
+
+    convert atom from str2int or int2str
+
+    """
+
+    if t is None:
+        t = type(atom)
+        t = str(t)
+
+    if "str" in t:
+        atom = atom.lower()
+        idx = __ATOMS__.index(atom) + 1
+        return idx
+
+    else:
+        atom = __ATOMS__[atom -1].capitalize()
+        return atom
+
+
 def get_indexes(lines, pattern):
 
     idxs = []
@@ -82,11 +118,18 @@ def get_rev_index(lines, pattern):
 
 
 def execute(cmd):
-    popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True, shell=True)
+
+    popen = subprocess.Popen(cmd,
+        stdout=subprocess.PIPE,
+        universal_newlines=True,
+        shell=True)
+
     for stdout_line in iter(popen.stdout.readline, ""):
         yield stdout_line
+
     popen.stdout.close()
     return_code = popen.wait()
+
     if return_code:
         raise subprocess.CalledProcessError(return_code, cmd)
 
@@ -115,13 +158,19 @@ def run_mndo_file(filename):
 
 def calculate(filename):
 
-    # stdout, stderr = run_mndo_file(filename)
-    # stdout = stdout.decode()
-    # stdout = stdout.split("\n")
-    #
-    # properties = get_properties(stdout)
+    calculations = run_mndo_file(filename)
 
-    return properties
+    properties_list = []
+
+    for lines in calculations:
+        try:
+            properties = get_properties(lines)
+            properties_list.append(properties)
+        except:
+            properties = {"energy": np.nan}
+            properties_list.append(properties)
+
+    return properties_list
 
 
 def get_properties(lines):
@@ -136,10 +185,20 @@ def get_properties(lines):
 
     properties = {}
 
+    # check for error
+    # idx = get_index(lines, "UNABLE TO ACHIEVE SCF CONVERGENCE")
+    # if idx is not None:
+    #     properties["energy"] = np.nan
+    #     return properties
+
     # SCF energy
     idx = get_rev_index(lines, "CORE HAMILTONIAN MATR")
     idx -= 9
     line = lines[idx]
+    if "SCF CONVERGENCE HAS BEE" in line:
+        idx -= 2
+        line = lines[idx]
+
     line = line.split()
     value = line[1]
     e_scf = float(value)
@@ -257,11 +316,82 @@ def get_properties(lines):
     return properties
 
 
+def get_default_params(method):
+    """
+
+    Get the default parameters of a method
+
+    """
+
+    atoms = [x.strip().upper() for x in [
+        'h ', \
+        'c ', 'n ', 'o ', 'f ',\
+        ]]
+
+    n_atoms = len(atoms)
+    method = method.upper()
+    header = "{:} 0SCF MULLIK PRECISE charge={{:}} jprint=5\n\nTITLE {{:}}".format(method)
+
+    coords = np.arange(n_atoms*3)
+    coords = coords.reshape((n_atoms, 3))
+    coords *= 5
+
+    txt = get_input(atoms, coords, 0, "get params", header=header)
+    filename = "_tmp_params.inp"
+
+    with open(filename, 'w') as f:
+        f.write(txt)
+
+    molecules = run_mndo_file(filename)
+
+    lines = next(molecules)
+
+    idx = get_index(lines, "PARAMETER VALUES USED IN THE CALCULATION")
+    idx += 4
+
+    parameters = {}
+
+    while True:
+
+        line = lines[idx]
+        line = line.strip().split()
+
+        if len(line) == 0:
+
+            line = lines[idx+1]
+            line = line.strip().split()
+
+            if len(line) == 0:
+                break
+            else:
+                idx += 1
+                continue
+
+        atom = line[0]
+        param = line[1]
+        value = line[2]
+        unit = line[3]
+        desc = " ".join(line[4:])
+
+        atom = int(atom)
+        atom = convert_atom(atom)
+        value = float(value)
+
+        if atom not in parameters.keys():
+            parameters[atom] = {}
+
+        parameters[atom][param] = value
+
+        idx += 1
+
+    return parameters
+
+
 def set_params(parameters, cwd=None):
     """
     """
 
-    txt = get_params(parameters)
+    txt = dump_params(parameters)
 
     if cwd is not None:
         os.chdir(cwd)
@@ -273,7 +403,13 @@ def set_params(parameters, cwd=None):
     return
 
 
-def get_params(parameters):
+def load_params():
+
+
+    return
+
+
+def dump_params(parameters):
     """
     """
 
@@ -382,18 +518,13 @@ def test_params():
     for lines in calculations:
         properties = get_properties(lines)
 
-        print(properties)
+        idx = get_index(lines, "USS")
+        line = stdout[idx]
+        line = line.split()
 
+        value = float(line[-1])
 
-    quit()
-
-    idx = get_index(stdout, "USS")
-    line = stdout[idx]
-    line = line.split()
-
-    value = float(line[-1])
-
-    assert value == 666.0
+        assert value == 666.0
 
     return
 
@@ -406,15 +537,20 @@ def main():
     # # TODO Select data
     #
     # # TODO Set input file
-    # txt = get_inputs(atoms_list[10:11], coord_list[10:11], charges[10:11], titles[10:11])
+    # txt = get_inputs(atoms_list, coord_list, charges, titles)
     # f = open("runfile.inp", 'w')
     # f.write(txt)
     # f.close()
 
     # TODO set params
-    set_params(__PARAMETERS_OM2__)
+    # set_params(__PARAMETERS_OM2__)
 
     # TODO Run calculation
+    stdout = run_mndo_file("runfile.inp")
+
+    for lines in stdout:
+        properties = get_properties(lines)
+        print(properties)
 
     # TODO Parse properties
 
@@ -422,5 +558,15 @@ def main():
 
 
 if __name__ == '__main__':
-    test_params()
+
+    main()
+
+    # dump parameters
+    # methods = ["MNDO", "AM1", "PM3", "OM2"]
+    #
+    # for method in methods:
+    #     parameters = get_default_params(method)
+    #     filename = "parameters.{:}.json".format(method.lower())
+    #     with open(filename, 'w') as f:
+    #         json.dump(parameters, f, indent=4)
 
