@@ -1,4 +1,6 @@
 
+import sklearn
+
 import itertools
 import functools
 import multiprocessing as mp
@@ -115,7 +117,7 @@ TITLE {{:}}"""
 
 
     # Define penalty func
-    def penalty(params):
+    def penalty(params, debug=True):
 
         for param, key in zip(params, parameters_keys):
             parameters[key[0]][key[1]] = param
@@ -132,34 +134,95 @@ TITLE {{:}}"""
         error = np.abs(diff)
         error = error.mean()
 
-        print("query error {:10.2f}".format(error))
+        if debug:
+            print("penalty: {:10.2f}".format(error))
 
         return error
 
 
-    def jacobian():
+    def jacobian(params, dh=0.000001, debug=True):
+
+        # TODO Parallelt
+
+        grad = []
+
+        for i, p in enumerate(params):
+
+            dparams = copy.deepcopy(params)
+
+            dparams[i] += dh
+            forward = penalty(dparams, debug=False)
+
+            dparams[i] -= (2.0 * dh)
+            backward = penalty(dparams, debug=False)
+
+            de = forward - backward
+            grad.append(de/(2.0 * dh))
 
 
-        return jac
+        grad = np.array(grad)
+
+        if debug:
+            nm = np.linalg.norm(grad)
+            print("penalty grad: {:10.2f}".format(nm))
+
+        return grad
 
 
     start_error = penalty(parameters_values)
-    print(start_error)
+    start_error_grad = jacobian(parameters_values)
+
     quit()
 
-    status = minimize(penalty, parameters_values,
+    res = minimize(penalty, parameters_values,
         method="L-BFGS-B",
+        jac=jacobian,
         options={"maxiter": 1000, "disp": True})
 
-
-    print(status)
+    parameters_values = res.x
+    error = penalty(parameters_values)
 
     for param, key in zip(parameters_values, parameters_keys):
         parameters[key[0]][key[1]] = param
 
     end_parameters = parameters
 
-    return end_parameters
+    return end_parameters, error
+
+
+
+def learning_curve(
+    mols_atoms,
+    mols_coords,
+    reference_properties,
+    start_parameters):
+
+    fold_five = sklearn.model_selection.KFold(n_splits=5, random_state=42, shuffle=True)
+    n_items = len(mols_atoms)
+    X = list(range(n_items))
+
+    score = []
+
+    for train_idxs, test_idxs in fold_five.split(X):
+
+        train_atoms = [mols_atoms[i] for i in train_idxs]
+        train_coords = [mols_coords[i] for i in train_idxs]
+        train_properties = reference_properties[train_idxs]
+
+        test_atoms = [mols_atoms[i] for i in test_idxs]
+        test_coords = [mols_coords[i] for i in test_idxs]
+        test_properties = reference_properties[test_idxs]
+
+        train_parameters, train_error = minimize_parameters(train_atoms, train_coords, train_properties, start_parameters)
+
+        print(train_parameters)
+
+
+        quit()
+
+
+
+    return
 
 
 def main():
@@ -191,7 +254,8 @@ def main():
         start_params = f.read()
         start_params = json.loads(start_params)
 
-    end_params = minimize_parameters(mols_atoms, mols_coords, ref_energies, start_params)
+    # end_params = minimize_parameters(mols_atoms, mols_coords, ref_energies, start_params)
+    end_params = learning_curve(mols_atoms, mols_coords, ref_energies, start_params)
 
     print(end_params)
 
