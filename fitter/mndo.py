@@ -108,6 +108,27 @@ def reverse_enum(L):
         yield index, L[index]
 
 
+
+def get_rev_indexes(lines, patterns):
+
+    n_patterns = len(patterns)
+    i_patterns = list(range(n_patterns))
+
+    idxs = [None]*n_patterns
+
+    for i, line in reverse_enum(lines):
+
+        for ip in i_patterns:
+
+            pattern = patterns[ip]
+
+            if line.find(pattern) != -1:
+                idxs[ip] = i
+                i_patterns.remove(ip)
+
+    return idxs
+
+
 def get_rev_index(lines, pattern):
 
     for i, line in reverse_enum(lines):
@@ -163,12 +184,12 @@ def calculate(filename):
     properties_list = []
 
     for lines in calculations:
-        try:
-            properties = get_properties(lines)
-            properties_list.append(properties)
-        except:
-            properties = {"energy": np.nan}
-            properties_list.append(properties)
+        # try:
+        properties = get_properties(lines)
+        properties_list.append(properties)
+        # except:
+        #     properties = {"energy": np.nan}
+        #     properties_list.append(properties)
 
     return properties_list
 
@@ -191,8 +212,16 @@ def get_properties(lines):
     #     properties["energy"] = np.nan
     #     return properties
 
+
+    idx_scf, idx_nuc = get_rev_indexes(lines, ["CORE HAMILTONIAN MATR", "NUCLEAR ENERGY", "not exists"])
+
+    print(idx_scf)
+    print(idx_nuc)
+    print()
+
     # SCF energy
     idx = get_rev_index(lines, "CORE HAMILTONIAN MATR")
+    print(idx)
     idx -= 9
     line = lines[idx]
     if "SCF CONVERGENCE HAS BEE" in line:
@@ -206,11 +235,14 @@ def get_properties(lines):
 
     # Nuclear energy
     idx = get_rev_index(lines, "NUCLEAR ENERGY")
+    print(idx)
     line = lines[idx]
     line = line.split()
     value = line[2]
     e_nuc = float(value)
     properties["e_nuc"] = e_nuc # ev
+
+    quit()
 
     # eisol
     eisol = dict()
@@ -223,15 +255,15 @@ def get_properties(lines):
         eisol[atom] = float(value) # ev
 
 
-    # Enthalpy of formation
-    idx_hof = get_index(lines, "SCF HEAT OF FORMATION")
-    line = lines[idx_hof]
-    line = line.split("FORMATION")
-    line = line[1]
-    line = line.split()
-    value = line[0]
-    value = float(value)
-    properties["h"] = value # kcal/mol
+    # # Enthalpy of formation
+    # idx_hof = get_index(lines, "SCF HEAT OF FORMATION")
+    # line = lines[idx_hof]
+    # line = line.split("FORMATION")
+    # line = line[1]
+    # line = line.split()
+    # value = line[0]
+    # value = float(value)
+    # properties["h"] = value # kcal/mol
 
     # ionization
     idx = get_rev_index(lines, "IONIZATION ENERGY")
@@ -240,13 +272,13 @@ def get_properties(lines):
     e_ion = float(value) # ev
     properties["e_ion"] = e_ion
 
-    # Dipole
-    idx = get_rev_index(lines, "PRINCIPAL AXIS")
-    line = lines[idx]
-    line = line.split()
-    value = line[-1]
-    value = float(value) # Debye
-    properties["mu"] = value
+    # # Dipole
+    # idx = get_rev_index(lines, "PRINCIPAL AXIS")
+    # line = lines[idx]
+    # line = line.split()
+    # value = line[-1]
+    # value = float(value) # Debye
+    # properties["mu"] = value
 
     # # optimized coordinates
     # i = get_rev_index(lines, 'CARTESIAN COORDINATES')
