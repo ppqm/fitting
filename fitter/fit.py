@@ -1,5 +1,6 @@
 
 import sklearn
+import sklearn.model_selection
 
 import itertools
 import functools

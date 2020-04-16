@@ -170,7 +170,7 @@ def run_mndo_file(filename):
         molecule_lines.append(line)
 
         if "STATISTICS FOR RUNS WITH MANY MOLECULES" in line:
-            raise StopIteration
+            return
 
         if "COMPUTATION TIME" in line:
             yield molecule_lines
@@ -184,6 +184,7 @@ def calculate(filename):
     properties_list = []
 
     for lines in calculations:
+
         # try:
         properties = get_properties(lines)
         properties_list.append(properties)
@@ -199,6 +200,12 @@ def get_properties(lines):
 
     get properties of a single calculation
 
+    arguments:
+        lines - list of MNDO output lines
+
+    return:
+        dict of properties
+
     """
 
     # TODO UNABLE TO ACHIEVE SCF CONVERGENCE
@@ -213,15 +220,10 @@ def get_properties(lines):
     #     return properties
 
 
-    idx_scf, idx_nuc = get_rev_indexes(lines, ["CORE HAMILTONIAN MATR", "NUCLEAR ENERGY", "not exists"])
-
-    print(idx_scf)
-    print(idx_nuc)
-    print()
+    idx_scf, idx_nuc = get_rev_indexes(lines, ["CORE HAMILTONIAN MATR", "NUCLEAR ENERGY"])
 
     # SCF energy
-    idx = get_rev_index(lines, "CORE HAMILTONIAN MATR")
-    print(idx)
+    # idx = get_rev_index(lines, "CORE HAMILTONIAN MATR")
     idx -= 9
     line = lines[idx]
     if "SCF CONVERGENCE HAS BEE" in line:
@@ -234,15 +236,13 @@ def get_properties(lines):
     properties["e_scf"] = e_scf
 
     # Nuclear energy
-    idx = get_rev_index(lines, "NUCLEAR ENERGY")
-    print(idx)
+    # idx = get_rev_index(lines, "NUCLEAR ENERGY")
     line = lines[idx]
     line = line.split()
     value = line[2]
     e_nuc = float(value)
     properties["e_nuc"] = e_nuc # ev
 
-    quit()
 
     # eisol
     eisol = dict()
@@ -589,16 +589,27 @@ def main():
     return
 
 
+def dump_default_parameters():
+    """
+
+    helper func
+
+    """
+
+    # dump parameters
+    methods = ["MNDO", "AM1", "PM3", "OM2"]
+
+    for method in methods:
+        parameters = get_default_params(method)
+        filename = "parameters.{:}.json".format(method.lower())
+        with open(filename, 'w') as f:
+            json.dump(parameters, f, indent=4)
+
+    return
+
+
 if __name__ == '__main__':
 
     main()
 
-    # dump parameters
-    # methods = ["MNDO", "AM1", "PM3", "OM2"]
-    #
-    # for method in methods:
-    #     parameters = get_default_params(method)
-    #     filename = "parameters.{:}.json".format(method.lower())
-    #     with open(filename, 'w') as f:
-    #         json.dump(parameters, f, indent=4)
 
