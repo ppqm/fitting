@@ -96,6 +96,21 @@ def get_indexes(lines, pattern):
     return idxs
 
 
+def get_indexes_with_stop(lines, pattern, stoppattern):
+
+    idxs = []
+
+    for i, line in enumerate(lines):
+        if line.find(pattern) != -1:
+            idxs.append(i)
+            continue
+
+        if line.find(stoppattern) != -1:
+            break
+
+    return idxs
+
+
 def get_index(lines, pattern):
     for i, line in enumerate(lines):
         if line.find(pattern) != -1:
@@ -219,11 +234,16 @@ def get_properties(lines):
     #     properties["energy"] = np.nan
     #     return properties
 
+    keywords = [
+        "CORE HAMILTONIAN MATR",
+        "NUCLEAR ENERGY",
+        "IONIZATION ENERGY",
+        "INPUT GEOMETRY"]
 
-    idx_scf, idx_nuc = get_rev_indexes(lines, ["CORE HAMILTONIAN MATR", "NUCLEAR ENERGY"])
+    idx_keywords = get_rev_indexes(lines, keywords)
 
     # SCF energy
-    # idx = get_rev_index(lines, "CORE HAMILTONIAN MATR")
+    idx = idx_keywords[0]
     idx -= 9
     line = lines[idx]
     if "SCF CONVERGENCE HAS BEE" in line:
@@ -236,7 +256,7 @@ def get_properties(lines):
     properties["e_scf"] = e_scf
 
     # Nuclear energy
-    # idx = get_rev_index(lines, "NUCLEAR ENERGY")
+    idx = idx_keywords[1]
     line = lines[idx]
     line = line.split()
     value = line[2]
@@ -246,7 +266,7 @@ def get_properties(lines):
 
     # eisol
     eisol = dict()
-    idxs = get_indexes(lines, "EISOL")
+    idxs = get_indexes_with_stop(lines, "EISOL", "IDENTIFICATION")
     for idx in idxs:
         line = lines[idx]
         line = line.split()
@@ -266,7 +286,8 @@ def get_properties(lines):
     # properties["h"] = value # kcal/mol
 
     # ionization
-    idx = get_rev_index(lines, "IONIZATION ENERGY")
+    # idx = get_rev_index(lines, "IONIZATION ENERGY")
+    idx = idx_keywords[2]
     line = lines[idx]
     value = line.split()[-2]
     e_ion = float(value) # ev
@@ -317,7 +338,8 @@ def get_properties(lines):
     # properties["atoms"] = symbols
 
     # input coords
-    idx = get_rev_index(lines, "INPUT GEOMETRY")
+    # idx = get_rev_index(lines, "INPUT GEOMETRY")
+    idx = idx_keywords[3]
     idx += 6
     atoms = []
     coord = []
