@@ -2,6 +2,7 @@
 import sklearn
 import sklearn.model_selection
 
+import time
 import itertools
 import functools
 import multiprocessing as mp
@@ -85,9 +86,9 @@ TITLE {{:}}"""
     header = header.format(method)
 
     filename = "_tmp_optimizer"
-    txt = mndo.get_inputs(mols_atoms, mols_coords, np.zeros(n_mols), range(n_mols), header=header)
+    inputtxt = mndo.get_inputs(mols_atoms, mols_coords, np.zeros(n_mols), range(n_mols), header=header)
     with open(filename, 'w') as f:
-        f.write(txt)
+        f.write(inputtxt)
 
     # Select atom parameters to optimize
     atoms = [np.unique(atom) for atom in mols_atoms]
@@ -141,7 +142,20 @@ TITLE {{:}}"""
         return error
 
 
-    def jacobian(params, dh=0.000001, debug=True):
+    def penalty_properties(properties_list):
+
+        calc_energies = np.array([properties["energy"] for properties in properties_list])
+        diff = reference_properties - calc_energies
+        idxs = np.argwhere(np.isnan(diff))
+        diff[idxs] = 700.0
+
+        error = np.abs(diff)
+        error = error.mean()
+
+        return error
+
+
+    def jacobian(params, dh=10**-5, debug=False):
 
         # TODO Parallelt
 
@@ -170,8 +184,47 @@ TITLE {{:}}"""
         return grad
 
 
+    def jacobian_parallel(params, dh=10**-5, procs=1):
+        """
+        """
+
+        for param, key in zip(params, parameters_keys):
+            parameters[key[0]][key[1]] = param
+
+        params_grad = mndo.numerical_jacobian(inputtxt, parameters, n_procs=procs, dh=dh)
+
+        grad = []
+
+        for atom, key in parameters_keys:
+            forward_mols, backward_mols = params_grad[atom][key]
+
+            penalty_forward = penalty_properties(forward_mols)
+            penalty_backward = penalty_properties(backward_mols)
+
+            de = penalty_forward - penalty_backward
+            grad.append(de/(2.0 * dh))
+
+        grad = np.array(grad)
+
+        return grad
+
+
     start_error = penalty(parameters_values)
-    start_error_grad = jacobian(parameters_values)
+
+    # check grad
+    dh = 10**-5
+
+    t = time.time()
+    grad = jacobian(parameters_values, dh=dh)
+    nm = np.linalg.norm(grad)
+    secs = time.time() - t
+    print("penalty grad: {:10.2f} time: {:10.2f}".format(nm, secs))
+
+    t = time.time()
+    grad = jacobian_parallel(parameters_values, procs=2, dh=dh)
+    nm = np.linalg.norm(grad)
+    secs = time.time() - t
+    print("penalty grad: {:10.2f} time: {:10.2f}".format(nm, secs))
 
     quit()
 

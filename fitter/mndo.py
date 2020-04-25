@@ -2,9 +2,33 @@
 import rmsd
 import pandas as pd
 import numpy as np
+import multiprocessing as mp
 import os
 import subprocess
 import json
+import os
+import functools
+import shutil
+import copy
+
+
+__IGNORE_PARAMS__ = [
+    'DD2',
+    'DD3',
+    'PO1',
+    'PO2',
+    'PO3',
+    'PO9',
+    'HYF',
+    'CORE',
+    'EISOL',
+    'FN1',
+    'FN2',
+    'FN3',
+    'GSCAL',
+    'BETAS',
+    'ZS',
+]
 
 __MNDO__ = "mndo"
 __MNDO__ = os.path.expanduser(__MNDO__)
@@ -64,6 +88,23 @@ __ATOMS__ = [x.strip() for x in [
     'fr', 'ra', 'ac', 'th', 'pa', 'u ', 'np', 'pu']]
 
 
+def get_pinfo():
+    """
+    get process id of parent and current process
+    """
+    ppid = os.getppid()
+    pid = os.getpid()
+    return ppid, ppid
+
+
+def fix_dir_name(name):
+
+    if not name.endswith("/"):
+        name += "/"
+
+    return name
+
+
 def convert_atom(atom, t=None):
     """
 
@@ -90,7 +131,7 @@ def get_indexes(lines, pattern):
     idxs = []
 
     for i, line in enumerate(lines):
-        if line.find(pattern) != -1:
+        if pattern in line:
             idxs.append(i)
 
     return idxs
@@ -101,11 +142,13 @@ def get_indexes_with_stop(lines, pattern, stoppattern):
     idxs = []
 
     for i, line in enumerate(lines):
-        if line.find(pattern) != -1:
+        # if line.find(pattern) != -1:
+        if pattern in line:
             idxs.append(i)
             continue
 
-        if line.find(stoppattern) != -1:
+        # if line.find(stoppattern) != -1:
+        if stoppattern in line:
             break
 
     return idxs
@@ -123,6 +166,25 @@ def reverse_enum(L):
         yield index, L[index]
 
 
+def get_indexes_patterns(lines, patterns):
+
+    n_patterns = len(patterns)
+    i_patterns = list(range(n_patterns))
+
+    idxs = [None]*n_patterns
+
+    for i, line in enumerate(lines):
+
+        for ip in i_patterns:
+
+            pattern = patterns[ip]
+
+            if pattern in line:
+                idxs[ip] = i
+                i_patterns.remove(ip)
+
+    return idxs
+
 
 def get_rev_indexes(lines, patterns):
 
@@ -137,7 +199,7 @@ def get_rev_indexes(lines, patterns):
 
             pattern = patterns[ip]
 
-            if line.find(pattern) != -1:
+            if pattern in line:
                 idxs[ip] = i
                 i_patterns.remove(ip)
 
@@ -153,7 +215,10 @@ def get_rev_index(lines, pattern):
     return None
 
 
-def execute(cmd):
+def execute(cmd, cwd=None):
+
+    if cwd is not None:
+        cmd = f"cd {cwd}; " + cmd
 
     popen = subprocess.Popen(cmd,
         stdout=subprocess.PIPE,
@@ -170,19 +235,18 @@ def execute(cmd):
         raise subprocess.CalledProcessError(return_code, cmd)
 
 
-def run_mndo_file(filename):
+def run_mndo_file(filename, cwd=None):
 
     cmd = __MNDO__
     cmd += " < " + filename
 
-    lines = execute(cmd)
+    lines = execute(cmd, cwd=cwd)
 
     molecule_lines = []
 
     for line in lines:
 
-        line = line.strip()
-        molecule_lines.append(line)
+        molecule_lines.append(line.strip("\n"))
 
         if "STATISTICS FOR RUNS WITH MANY MOLECULES" in line:
             return
@@ -191,10 +255,12 @@ def run_mndo_file(filename):
             yield molecule_lines
             molecule_lines = []
 
+    return
 
-def calculate(filename):
 
-    calculations = run_mndo_file(filename)
+def calculate(filename, cwd=None):
+
+    calculations = run_mndo_file(filename, cwd=cwd)
 
     properties_list = []
 
@@ -202,10 +268,36 @@ def calculate(filename):
 
         # try:
         properties = get_properties(lines)
-        properties_list.append(properties)
         # except:
-        #     properties = {"energy": np.nan}
-        #     properties_list.append(properties)
+        #     properties = None
+
+        properties_list.append(properties)
+
+    return properties_list
+
+
+def worker(*args, **kwargs):
+
+    scr = kwargs["scr"]
+    filename = kwargs["filename"]
+    params = args[0]
+
+    # Ensure unique directory
+    scr = fix_dir_name(scr)
+    pid = os.getpid()
+    cwd = f"{scr}{pid}/"
+
+    if not os.path.exists(cwd):
+        os.mkdir(cwd)
+
+    if not os.path.exists(cwd + filename):
+        shutil.copy2(scr + filename, cwd + filename)
+
+    # Set params in worker dir
+    set_params(params, cwd=cwd)
+
+    # Calculate properties
+    properties_list = calculate(filename, cwd=cwd)
 
     return properties_list
 
@@ -370,6 +462,167 @@ def get_properties(lines):
     return properties
 
 
+def calculate_multi_params(
+    inputstr,
+    params_list,
+    scr=None,
+    n_procs=1):
+    """
+
+    """
+
+    scr = "_tmp_mndo_/"
+    if not os.path.exists(scr):
+        os.mkdir(scr)
+
+    filename = "_tmp_inputstr_"
+    with open(scr + filename, 'w') as f:
+        f.write(inputstr)
+
+    # TODO Create uuid folders in scr
+    # TODO Change dir for each thread
+    # TODO Stream results for each thread
+
+    # TODO Collect properties, same order
+
+    kwargs = {
+        "scr": scr,
+        "filename": filename,
+    }
+
+    mapfunc = functools.partial(worker, **kwargs)
+
+    p = mp.Pool(n_procs)
+    results = p.map(mapfunc, params_list)
+
+    return results
+
+
+def numerical_jacobian(inputstr, params, dh=10**-5, n_procs=2):
+    """
+    get properties for
+
+    """
+
+    params_joblist = []
+    atom_keys = params.keys()
+    param_keys = {}
+    param_grad = {}
+
+    for atom in atom_keys:
+        keys = params.get(atom).keys()
+        param_keys[atom] = keys
+
+        param_grad[atom] = {}
+        for key in keys:
+            param_grad[atom][key] = []
+
+    for atom in atom_keys:
+        for key in param_keys[atom]:
+
+            dparams = copy.deepcopy(params)
+
+            # forward
+            dparams[atom][key] += dh
+            params_joblist.append(copy.deepcopy(dparams))
+
+            # backward
+            dparams[atom][key] -= 2*dh
+            params_joblist.append(copy.deepcopy(dparams))
+
+
+    # Calculate all results
+    results = calculate_multi_params(inputstr, params_joblist, n_procs=n_procs)
+    n_results = len(results)
+
+    i = 0
+    for atom in atom_keys:
+        for key in param_keys[atom]:
+            param_grad[atom][key].append(results[i])
+            param_grad[atom][key].append(results[i+1])
+            i += 2
+
+    return param_grad
+
+
+def set_params(parameters, cwd=None):
+    """
+    """
+
+    txt = dump_params(parameters)
+
+    filename = "fort.14"
+
+    if cwd is not None:
+        cwd = fix_dir_name(cwd)
+        filename = cwd + filename
+
+    with open(filename, 'w') as f:
+        f.write(txt)
+
+    return
+
+
+def load_params(filename, ignore_keys=__IGNORE_PARAMS__):
+
+    with open(filename, 'r') as f:
+        params = f.read()
+        params = json.loads(params)
+
+    if ignore_keys is not None:
+        for atom in params:
+            for key in ignore_keys:
+                params[atom].pop(key, None)
+
+    return params
+
+
+def dump_params(parameters, ignore_keys=__IGNORE_PARAMS__):
+    """
+    """
+
+    # TODO andersx has some if-statements in his writer
+
+    txt = ""
+
+    for atomtype in parameters:
+        for key in parameters[atomtype]:
+            if key in ignore_keys:
+                continue
+            line = "{:8s} {:2s} {:15.11f}\n".format(key, atomtype, parameters[atomtype][key])
+            txt += line
+
+    return txt
+
+
+def get_inputs(atoms_list, coords_list, charges, titles, header=__HEADER__):
+    """
+    """
+
+    inptxt = ""
+    for atoms, coords, charge, title in zip(atoms_list, coords_list, charges, titles):
+        txt = get_input(atoms, coords, charge, title, header=header)
+        inptxt += txt
+
+    return inptxt
+
+
+def get_input(atoms, coords, charge, title, header=__HEADER__):
+    """
+    """
+
+    txt = header.format(charge, title)
+    txt += "\n"
+
+    for atom, coord in zip(atoms, coords):
+        line = __ATOMLINE__.format(atom, *coord)
+        txt += line + "\n"
+
+    txt += "\n"
+
+    return txt
+
+
 def get_default_params(method):
     """
 
@@ -441,144 +694,22 @@ def get_default_params(method):
     return parameters
 
 
-def set_params(parameters, cwd=None):
-    """
-    """
 
-    txt = dump_params(parameters)
-
-    if cwd is not None:
-        os.chdir(cwd)
-
-    f = open('fort.14', 'w')
-    f.write(txt)
-    f.close()
-
-    return
-
-
-def load_params():
-
-
-    return
-
-
-def dump_params(parameters):
-    """
+def dump_default_parameters():
     """
 
-    # TODO andersx has some if-statements in his writer
+    helper func
 
-    txt = ""
-
-    for atomtype in parameters:
-        for key in parameters[atomtype]:
-            line = "{:8s} {:2s} {:15.11f}\n".format(key, atomtype, parameters[atomtype][key])
-            txt += line
-
-    return txt
-
-
-def get_inputs(atoms_list, coords_list, charges, titles, header=__HEADER__):
-    """
     """
 
-    inptxt = ""
-    for atoms, coords, charge, title in zip(atoms_list, coords_list, charges, titles):
-        txt = get_input(atoms, coords, charge, title, header=header)
-        inptxt += txt
+    # dump parameters
+    methods = ["MNDO", "AM1", "PM3", "OM2"]
 
-    return inptxt
-
-
-def get_input(atoms, coords, charge, title, header=__HEADER__):
-    """
-    """
-
-    txt = header.format(charge, title)
-    txt += "\n"
-
-    for atom, coord in zip(atoms, coords):
-        line = __ATOMLINE__.format(atom, *coord)
-        txt += line + "\n"
-
-    txt += "\n"
-
-    return txt
-
-
-def load_data():
-
-    reference = "../dataset-qm9/reference.csv"
-    reference = pd.read_csv(reference)
-
-    filenames = reference["name"]
-    # energies = reference["binding energy"]
-
-    atoms_list = []
-    coord_list = []
-    charges = []
-    titles = []
-
-    for filename in filenames:
-
-        titles.append(filename)
-        charges.append(0)
-
-        filename = "../dataset-qm9/xyz/" + filename + ".xyz"
-        atoms, coord = rmsd.get_coordinates_xyz(filename)
-
-        atoms_list.append(atoms)
-        coord_list.append(coord)
-
-    return atoms_list, coord_list, charges, titles
-
-
-def test_params():
-
-    parameters = {}
-    parameters["O"] = {}
-    parameters["O"]["USS"] = 666.0
-    filename = "_tmp_test_params"
-
-    set_params(parameters)
-
-    atoms = [
-    'O',
-    'N',
-    'C',
-    'N',
-    'N',
-    'H',]
-
-    coords = [
-        [ -0.0593325887, 1.2684201211  , 0.0095178503  ],
-        [ 1.1946293712 , 1.771776509   , 0.0001229152  ],
-        [ 1.9590217387 , 0.7210517427  , -0.0128069641 ],
-        [ 1.2270421979 , -0.4479406483 , -0.0121559722 ],
-        [ 0.0119302176 , -0.1246338293 , 0.0012973737  ],
-        [ 3.0355546734 , 0.7552313348  , -0.0229864829 ],
-    ]
-
-    inptxt = get_input(atoms, coords, 0, "testfile")
-
-    f = open(filename, 'w')
-    f.write(inptxt)
-    f.write(inptxt)
-    f.close()
-
-    calculations = run_mndo_file(filename)
-
-    for lines in calculations:
-        properties = get_properties(lines)
-
-        idx = get_index(lines, "USS")
-        line = stdout[idx]
-        line = line.split()
-
-        value = float(line[-1])
-
-        assert value == 666.0
+    for method in methods:
+        parameters = get_default_params(method)
+        filename = "parameters.{:}.json".format(method.lower())
+        with open(filename, 'w') as f:
+            json.dump(parameters, f, indent=4)
 
     return
 
@@ -600,32 +731,27 @@ def main():
     # set_params(__PARAMETERS_OM2__)
 
     # TODO Run calculation
-    stdout = run_mndo_file("runfile.inp")
-
-    for lines in stdout:
-        properties = get_properties(lines)
-        print(properties)
+    # stdout = run_mndo_file("runfile.inp")
+    #
+    # for lines in stdout:
+    #     properties = get_properties(lines)
+    #     print(properties)
 
     # TODO Parse properties
 
-    return
+    # Test multi input
+    params = load_params("parameters/parameters.pm3.json")
+    params.pop("F")
 
+    # params_list = [params]*100
 
-def dump_default_parameters():
-    """
+    with open("_tmp_optimizer") as f:
+        inputstr = f.read()
 
-    helper func
+    # results = calculate_multi_params(inputstr, params_list, n_procs=1)
 
-    """
-
-    # dump parameters
-    methods = ["MNDO", "AM1", "PM3", "OM2"]
-
-    for method in methods:
-        parameters = get_default_params(method)
-        filename = "parameters.{:}.json".format(method.lower())
-        with open(filename, 'w') as f:
-            json.dump(parameters, f, indent=4)
+    params_grad = numerical_jacobian(inputstr, params)
+    print(json.dumps(params_grad, indent=1))
 
     return
 
